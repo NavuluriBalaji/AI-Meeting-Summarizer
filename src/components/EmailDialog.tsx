@@ -40,7 +40,7 @@ Duration: ${formattedDuration}
 ${summary}
     `.trim();
 
-    const mailtoLink = `mailto:?bcc=${emailList.join(',')}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const mailtoLink = `mailto:${emailList.join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
     window.location.href = mailtoLink;
     onClose();
   };

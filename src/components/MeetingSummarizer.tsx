@@ -10,6 +10,7 @@ interface MeetingSummary {
   date: string;
   duration: number;
   summary: string;
+  transcript: string;
 }
 
 export function MeetingSummarizer() {
@@ -23,10 +24,13 @@ export function MeetingSummarizer() {
   const [duration, setDuration] = useState(0);
   const [summaryHistory, setSummaryHistory] = useState<MeetingSummary[]>([]);
   const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
-  
+  const [audioURL, setAudioURL] = useState<string | null>(null);
+  const [interimTranscript, setInterimTranscript] = useState('');
+
   const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const durationIntervalRef = useRef<number | null>(null);
-  const restartTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     const history = localStorage.getItem('meetingSummaryHistory');
@@ -36,19 +40,29 @@ export function MeetingSummarizer() {
 
     return () => {
       if (durationIntervalRef.current) {
-        window.clearInterval(durationIntervalRef.current);
+        clearInterval(durationIntervalRef.current);
       }
-      if (restartTimeoutRef.current) {
-        window.clearTimeout(restartTimeoutRef.current);
-      }
+      stopRecording();
     };
   }, []);
 
-  const updateDuration = () => {
+  useEffect(() => {
     if (startTime && !isPaused) {
-      setDuration(prev => prev + 1);
+      durationIntervalRef.current = window.setInterval(() => {
+        const now = new Date();
+        const diff = Math.floor((now.getTime() - startTime.getTime()) / 1000);
+        setDuration(diff);
+      }, 1000);
+    } else if (durationIntervalRef.current) {
+      clearInterval(durationIntervalRef.current);
     }
-  };
+
+    return () => {
+      if (durationIntervalRef.current) {
+        clearInterval(durationIntervalRef.current);
+      }
+    };
+  }, [startTime, isPaused]);
 
   const formatDuration = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -65,65 +79,52 @@ export function MeetingSummarizer() {
     const recognition = new (window.webkitSpeechRecognition || window.SpeechRecognition)();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
 
     recognition.onstart = () => {
+      console.log('Speech recognition started');
       setIsRecording(true);
       setError(null);
       if (!startTime) {
         setStartTime(new Date());
-        durationIntervalRef.current = window.setInterval(updateDuration, 1000);
       }
     };
 
     recognition.onresult = (event) => {
-      if (!isPaused) {
-        let interimTranscript = '';
-        let finalTranscript = '';
+      let interimTranscriptText = '';
+      let finalTranscriptText = '';
 
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const transcript = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            finalTranscript += transcript + ' ';
-          } else {
-            interimTranscript += transcript;
-          }
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscriptText += transcript + ' ';
+        } else {
+          interimTranscriptText += transcript;
         }
+      }
 
-        if (finalTranscript) {
-          setTranscript(prev => prev + finalTranscript);
-        }
-
-        // Reset the restart timeout whenever we get a result
-        if (restartTimeoutRef.current) {
-          window.clearTimeout(restartTimeoutRef.current);
-        }
-        restartTimeoutRef.current = window.setTimeout(() => {
-          if (isRecording && !isPaused && recognitionRef.current) {
-            recognitionRef.current.stop();
-            recognitionRef.current.start();
-          }
-        }, 5000); // Restart after 5 seconds of silence
+      if (finalTranscriptText) {
+        setTranscript(prev => prev + finalTranscriptText);
+        setInterimTranscript('');
+      } else {
+        setInterimTranscript(interimTranscriptText);
       }
     };
 
     recognition.onerror = (event) => {
       console.error('Speech recognition error:', event.error);
       if (event.error === 'no-speech') {
-        // Automatically restart on no-speech error if we're still recording
-        if (isRecording && !isPaused && recognitionRef.current) {
-          recognitionRef.current.stop();
-          recognitionRef.current.start();
-        }
+        console.log('No speech detected');
+      } else if (event.error === 'audio-capture') {
+        setError('No microphone detected. Please ensure a microphone is connected and try again.');
+      } else if (event.error === 'not-allowed') {
+        setError('Microphone access was denied. Please allow microphone access and try again.');
       } else {
-        setError(`Error occurred in recognition: ${event.error}`);
-        setIsRecording(false);
-        setIsPaused(false);
+        setError(`Speech recognition error: ${event.error}`);
       }
     };
 
     recognition.onend = () => {
-      // Only automatically restart if we're still supposed to be recording
+      console.log('Speech recognition ended');
       if (isRecording && !isPaused) {
         recognition.start();
       }
@@ -132,12 +133,35 @@ export function MeetingSummarizer() {
     return recognition;
   };
 
-  const startRecording = () => {
+  const startRecording = async () => {
     try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Set up media recorder for audio preview
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const url = URL.createObjectURL(audioBlob);
+        setAudioURL(url);
+      };
+
+      mediaRecorderRef.current = mediaRecorder;
+      mediaRecorder.start(1000);
+
+      // Set up speech recognition
       const recognition = setupRecognition();
       recognitionRef.current = recognition;
       recognition.start();
+
+      setError(null);
     } catch (err) {
+      console.error('Error starting recording:', err);
       setError(err instanceof Error ? err.message : 'Failed to start recording');
     }
   };
@@ -145,60 +169,65 @@ export function MeetingSummarizer() {
   const pauseRecording = () => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
-      setIsPaused(true);
-      if (restartTimeoutRef.current) {
-        window.clearTimeout(restartTimeoutRef.current);
-      }
     }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.pause();
+    }
+    setIsPaused(true);
   };
 
   const resumeRecording = () => {
-    if (recognitionRef.current) {
+    if (recognitionRef.current && isPaused) {
       recognitionRef.current.start();
-      setIsPaused(false);
     }
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'paused') {
+      mediaRecorderRef.current.resume();
+    }
+    setIsPaused(false);
   };
 
   const stopRecording = async () => {
     if (recognitionRef.current) {
       recognitionRef.current.stop();
-      setIsRecording(false);
-      setIsPaused(false);
-      if (durationIntervalRef.current) {
-        window.clearInterval(durationIntervalRef.current);
-      }
-      if (restartTimeoutRef.current) {
-        window.clearTimeout(restartTimeoutRef.current);
-      }
+    }
 
-      if (transcript.trim()) {
-        setLoading(true);
-        try {
-          const meetingSummary = await summarizeMeeting(transcript);
-          setSummary(meetingSummary);
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
+    }
 
-          const newSummary: MeetingSummary = {
-            id: Date.now().toString(),
-            date: new Date().toISOString(),
-            duration,
-            summary: meetingSummary,
-          };
+    setIsRecording(false);
+    setIsPaused(false);
+    setStartTime(null);
 
-          const updatedHistory = [newSummary, ...summaryHistory];
-          setSummaryHistory(updatedHistory);
-          localStorage.setItem('meetingSummaryHistory', JSON.stringify(updatedHistory));
-        } catch (err) {
-          setError(err instanceof Error ? err.message : 'Failed to generate summary');
-        } finally {
-          setLoading(false);
-        }
+    if (transcript.trim()) {
+      setLoading(true);
+      try {
+        const meetingSummary = await summarizeMeeting(transcript);
+        setSummary(meetingSummary);
+
+        const newSummary: MeetingSummary = {
+          id: Date.now().toString(),
+          date: new Date().toISOString(),
+          duration,
+          summary: meetingSummary,
+          transcript: transcript
+        };
+
+        const updatedHistory = [newSummary, ...summaryHistory];
+        setSummaryHistory(updatedHistory);
+        localStorage.setItem('meetingSummaryHistory', JSON.stringify(updatedHistory));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to generate summary');
+      } finally {
+        setLoading(false);
       }
     }
   };
 
   const handleSignOut = async () => {
-    if (isRecording && recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (isRecording) {
+      stopRecording();
     }
     await supabase.auth.signOut();
   };
@@ -271,10 +300,20 @@ export function MeetingSummarizer() {
             )}
           </div>
 
-          {transcript && (
+          {audioURL && (
+            <div className="mb-4">
+              <h3 className="text-lg font-semibold mb-2">Audio Preview</h3>
+              <audio controls src={audioURL} className="w-full" />
+            </div>
+          )}
+
+          {(transcript || interimTranscript) && (
             <div className="border rounded-lg p-4 bg-gray-50 mb-4">
               <h2 className="text-lg font-semibold mb-2">Transcript</h2>
-              <p className="text-gray-700 whitespace-pre-wrap">{transcript}</p>
+              <p className="text-gray-700 whitespace-pre-wrap">
+                {transcript}
+                <span className="text-gray-500">{interimTranscript}</span>
+              </p>
             </div>
           )}
 
