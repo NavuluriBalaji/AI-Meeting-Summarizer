@@ -4,7 +4,6 @@ import { Mic, MicOff, Pause, Play, Loader2, LogOut, Clock, History, Mail, AlertT
 import { supabase } from '../lib/supabase';
 import { summarizeMeeting } from '../lib/gemini';
 import { transcribeAudio } from '../lib/huggingface';
-import { transcribeWithGoogleSpeech } from '../lib/googleSpeech';
 import { EmailDialog } from './EmailDialog';
 
 interface MeetingSummary {
@@ -15,7 +14,7 @@ interface MeetingSummary {
   transcript: string;
 }
 
-type SpeechService = 'huggingface' | 'google';
+type SpeechService = 'gemini';
 
 export function MeetingSummarizer() {
   const [isRecording, setIsRecording] = useState(false);
@@ -32,18 +31,17 @@ export function MeetingSummarizer() {
   const [audioURL, setAudioURL] = useState<string | null>(null);
   const [interimTranscript, setInterimTranscript] = useState('');
   const [audioSupported, setAudioSupported] = useState(true);
-  const [apiStatus, setApiStatus] = useState<{gemini: boolean, huggingface: boolean, googleSpeech: boolean}>({
+  const [apiStatus, setApiStatus] = useState<{gemini: boolean; huggingface: boolean}>({
     gemini: true,
-    huggingface: true,
-    googleSpeech: false
+    huggingface: true
   });
-  const [speechService, setSpeechService] = useState<SpeechService>('huggingface');
+  const [speechService] = useState<SpeechService>('gemini');
   const [showSettings, setShowSettings] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const durationIntervalRef = useRef<number | null>(null);
-  const maxRecordingDuration = 1000; // Maximum recording duration in seconds
+  const maxRecordingDuration = 300;
 
   // Check if audio recording is supported
   useEffect(() => {
@@ -56,25 +54,16 @@ export function MeetingSummarizer() {
     const checkApiKeys = async () => {
       const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
       const huggingfaceKey = import.meta.env.VITE_HUGGINGFACE_API_KEY;
-      const googleCloudKey = import.meta.env.VITE_GOOGLE_CLOUD_API_KEY;
       
       setApiStatus({
         gemini: !!geminiKey,
-        huggingface: !!huggingfaceKey,
-        googleSpeech: !!googleCloudKey
+        huggingface: !!huggingfaceKey
       });
-      
-      // Set default speech service based on available API keys
-      if (googleCloudKey) {
-        setSpeechService('google');
-      } else if (huggingfaceKey) {
-        setSpeechService('huggingface');
-      }
       
       if (!geminiKey) {
         setError('Google Gemini API key is missing. Please check your .env file.');
-      } else if (!huggingfaceKey && !googleCloudKey) {
-        setError('No speech-to-text API keys are available. Please add either Hugging Face or Google Cloud API key to the .env file.');
+      } else if (!huggingfaceKey) {
+        setError('Hugging Face API key is missing. Please add it to the .env file.');
       }
     };
     
@@ -91,7 +80,10 @@ export function MeetingSummarizer() {
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
       }
-      stopRecording();
+      // Only stop recording if currently recording
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        stopRecording();
+      }
     };
   }, []);
 
@@ -128,18 +120,13 @@ export function MeetingSummarizer() {
   const startRecording = async () => {
     try {
       setError(null);
-      
-      // Check API keys based on selected service
-      if (speechService === 'huggingface' && !apiStatus.huggingface) {
-        throw new Error('Hugging Face API key is missing. Please check your .env file or switch to Google Cloud Speech.');
-      } else if (speechService === 'google' && !apiStatus.googleSpeech) {
-        throw new Error('Google Cloud API key is missing. Please check your .env file or switch to Hugging Face.');
+      // Only check Hugging Face API key
+      if (!apiStatus.huggingface) {
+        throw new Error('Hugging Face API key is missing. Please check your .env file.');
       }
-      
       if (!apiStatus.gemini) {
         throw new Error('Google Gemini API key is missing. Please check your .env file.');
       }
-      
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Audio recording is not supported in this browser. Try using Chrome or Firefox.');
       }
@@ -260,37 +247,22 @@ export function MeetingSummarizer() {
           throw new Error('Audio recording is too short or empty. Please try again or use the "Test with Sample Text" option.');
         }
         
-        // Transcribe the audio using the selected service
+        // Transcribe the audio using Hugging Face only
         let transcribedText = '';
-        
-        if (speechService === 'huggingface') {
-          // Check if the Hugging Face API key is set
-          if (!import.meta.env.VITE_HUGGINGFACE_API_KEY) {
-            throw new Error('Hugging Face API key is not set. Please add your API key to the .env file or switch to Google Cloud Speech.');
-          }
-          
-          transcribedText = await transcribeAudio(audioBlob);
-        } else if (speechService === 'google') {
-          // Check if the Google Cloud API key is set
-          if (!import.meta.env.VITE_GOOGLE_CLOUD_API_KEY) {
-            throw new Error('Google Cloud API key is not set. Please add your API key to the .env file or switch to Hugging Face.');
-          }
-          
-          transcribedText = await transcribeWithGoogleSpeech(audioBlob);
+        if (!import.meta.env.VITE_GEMINI_API_KEY) {
+          throw new Error('Hugging Face API key is not set. Please add your API key to the .env file.');
         }
+        transcribedText = await transcribeAudio(audioBlob);
         
         if (!transcribedText || transcribedText.trim() === '') {
           throw new Error('No transcription was returned. The audio might be too quiet or in an unsupported language.');
         }
         
         setTranscript(transcribedText);
-        
-        // Check if the Google Gemini API key is set
         if (!import.meta.env.VITE_GEMINI_API_KEY) {
           throw new Error('Google Gemini API key is not set. Please add your API key to the .env file.');
         }
-        
-        // Generate summary
+
         setLoading(true);
         try {
           const meetingSummary = await summarizeMeeting(transcribedText);
@@ -340,8 +312,7 @@ export function MeetingSummarizer() {
       if (!apiStatus.gemini) {
         throw new Error('Google Gemini API key is missing. Please check your .env file.');
       }
-      
-      // Sample text for testing when audio recording fails
+
       const sampleText = "This is a test meeting transcript. We discussed the project timeline and agreed to complete the first phase by next Friday. John will handle the design work, and Sarah will take care of the backend implementation. We also decided to use React for the frontend and Node.js for the backend. The team will meet again next Monday to review progress.";
       
       setTranscript(sampleText);
@@ -380,11 +351,6 @@ export function MeetingSummarizer() {
     setShowSettings(!showSettings);
   };
 
-  const handleSpeechServiceChange = (service: SpeechService) => {
-    setSpeechService(service);
-    setShowSettings(false);
-  };
-
   return (
     <div className="max-w-4xl mx-auto p-8">
       <div className="bg-white rounded-lg shadow-md p-6">
@@ -402,54 +368,6 @@ export function MeetingSummarizer() {
                 )}
               </div>
             )}
-            <button
-              onClick={toggleSettings}
-              className="flex items-center text-gray-600 hover:text-gray-900 relative"
-            >
-              <Settings className="w-5 h-5 mr-2" />
-              Settings
-              
-              {showSettings && (
-                <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-md shadow-lg z-10 p-4">
-                  <h3 className="font-medium text-gray-900 mb-2">Speech-to-Text Service</h3>
-                  <div className="space-y-2">
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        name="speechService"
-                        value="huggingface"
-                        checked={speechService === 'huggingface'}
-                        onChange={() => handleSpeechServiceChange('huggingface')}
-                        disabled={!apiStatus.huggingface}
-                        className="text-blue-600"
-                      />
-                      <span className={!apiStatus.huggingface ? "text-gray-400" : "text-gray-700"}>
-                        Hugging Face (Arabic-Morocco model)
-                      </span>
-                    </label>
-                    <label className="flex items-center space-x-2">
-                      <input
-                        type="radio"
-                        name="speechService"
-                        value="google"
-                        checked={speechService === 'google'}
-                        onChange={() => handleSpeechServiceChange('google')}
-                        disabled={!apiStatus.googleSpeech}
-                        className="text-blue-600"
-                      />
-                      <span className={!apiStatus.googleSpeech ? "text-gray-400" : "text-gray-700"}>
-                        Google Cloud Speech-to-Text
-                      </span>
-                    </label>
-                  </div>
-                  {!apiStatus.googleSpeech && (
-                    <p className="text-xs text-yellow-600 mt-2">
-                      Google Cloud API key is not set. Add it to your .env file to enable this option.
-                    </p>
-                  )}
-                </div>
-              )}
-            </button>
             <Link
               to="/history"
               className="flex items-center text-gray-600 hover:text-gray-900"
@@ -467,14 +385,14 @@ export function MeetingSummarizer() {
           </div>
         </div>
 
-        {(!apiStatus.gemini || (!apiStatus.huggingface && !apiStatus.googleSpeech)) && (
+        {(!apiStatus.gemini || !apiStatus.huggingface) && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-md flex items-start">
             <AlertTriangle className="w-5 h-5 text-red-500 mr-3 mt-0.5" />
             <div>
               <h3 className="font-medium text-red-800">API Keys Missing</h3>
               <p className="text-red-700 mt-1">
                 {!apiStatus.gemini && "Google Gemini API key is missing. "}
-                {!apiStatus.huggingface && !apiStatus.googleSpeech && "No speech-to-text API keys are available. "}
+                {!apiStatus.huggingface && "Hugging Face API key is missing. "}
                 Please check your .env file.
               </p>
             </div>
@@ -512,7 +430,7 @@ export function MeetingSummarizer() {
           <div className="flex items-center">
             <span className="text-sm font-medium text-gray-700 mr-2">Current Speech-to-Text Service:</span>
             <span className="text-sm font-semibold text-blue-600">
-              {speechService === 'huggingface' ? 'Hugging Face (Arabic-Morocco model)' : 'Google Cloud Speech-to-Text'}
+              Gemini 2.5 pro
             </span>
           </div>
         </div>
@@ -523,13 +441,9 @@ export function MeetingSummarizer() {
               <>
                 <button
                   onClick={startRecording}
-                  disabled={!audioSupported || !apiStatus.gemini || 
-                    (speechService === 'huggingface' && !apiStatus.huggingface) || 
-                    (speechService === 'google' && !apiStatus.googleSpeech)}
+                  disabled={!audioSupported || !apiStatus.gemini || !apiStatus.huggingface}
                   className={`flex items-center px-6 py-3 rounded-full ${
-                    audioSupported && apiStatus.gemini && 
-                    ((speechService === 'huggingface' && apiStatus.huggingface) || 
-                     (speechService === 'google' && apiStatus.googleSpeech))
+                    audioSupported && apiStatus.gemini && apiStatus.huggingface
                       ? "bg-blue-600 hover:bg-blue-700 text-white" 
                       : "bg-gray-300 text-gray-500 cursor-not-allowed"
                   } transition-colors`}
@@ -597,7 +511,7 @@ export function MeetingSummarizer() {
           {transcribing && (
             <div className="flex items-center justify-center text-gray-600 p-4">
               <Loader2 className="w-5 h-5 animate-spin mr-2" />
-              Transcribing audio using {speechService === 'huggingface' ? 'Hugging Face model (smerchi/Arabic-Morocco-Speech_To_Text)' : 'Google Cloud Speech-to-Text'}...
+              Transcribing audio using Hugging Face model (facebook/s2t-small-librispeech-asr)...
             </div>
           )}
 
