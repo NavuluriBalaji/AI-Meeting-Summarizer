@@ -418,7 +418,7 @@ export function MeetingSummarizer() {
             <h3 className="font-medium text-blue-800">Recording Tips</h3>
             <ul className="text-blue-700 mt-1 list-disc list-inside">
               <li>Speak clearly and at a normal pace</li>
-              <li>Keep recordings under {maxRecordingDuration} seconds for best results</li>
+              <li>Keep recordings under {maxRecordingDuration} seconds i.e 20 minutes for best results</li>
               <li>Reduce background noise when possible</li>
               <li>If transcription fails, try the "Test with Sample Text" option</li>
               <li>Try switching between speech-to-text services in Settings if one doesn't work well</li>
