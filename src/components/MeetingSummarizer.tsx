@@ -41,7 +41,7 @@ export function MeetingSummarizer() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const durationIntervalRef = useRef<number | null>(null);
-  const maxRecordingDuration = 300;
+  const maxRecordingDuration = 1200;
 
   // Check if audio recording is supported
   useEffect(() => {
