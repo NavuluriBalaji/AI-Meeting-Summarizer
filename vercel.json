@@ -13,7 +13,7 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "https://ai-meeting-summarizer-delta.vercel.app/"
+      "dest": "/AI-Meeting-Summarizer-main/index.html"
     }
   ]
 }
