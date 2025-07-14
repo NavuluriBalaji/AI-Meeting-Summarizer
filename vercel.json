@@ -2,18 +2,18 @@
   "version": 2,
   "builds": [
     {
-      "src": "src/**/*.{js,ts,jsx,tsx}",
+      "src": "AI-Meeting-Summarizer-main/src/**/*.{js,ts,jsx,tsx}",
       "use": "@vercel/node"
     },
     {
-      "src": "public/**/*",
+      "src": "AI-Meeting-Summarizer-main/public/**/*",
       "use": "@vercel/static"
     }
   ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "/index.html"
+      "dest": "/AI-Meeting-Summarizer-main/public/index.html"
     }
   ]
 }
