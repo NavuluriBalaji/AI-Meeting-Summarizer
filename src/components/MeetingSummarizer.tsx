@@ -1,10 +1,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Mic, MicOff, Pause, Play, Loader2, LogOut, Clock, History, Mail, AlertTriangle, Info, Settings, Menu } from 'lucide-react';
+import { Mic, MicOff, Clock, History, LogOut, Settings, Menu } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { summarizeMeeting } from '../lib/gemini';
 import { transcribeAudio } from '../lib/huggingface';
-import { EmailDialog } from './EmailDialog';
 import Calendar from 'react-calendar';
 import 'react-calendar/dist/Calendar.css';
 
@@ -35,7 +34,6 @@ export function MeetingSummarizer() {
   const [summaryHistory, setSummaryHistory] = useState<MeetingSummary[]>([]);
   const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false);
   const [audioURL, setAudioURL] = useState<string | null>(null);
-  const [interimTranscript, setInterimTranscript] = useState('');
   const [audioSupported, setAudioSupported] = useState(true);
   const [apiStatus, setApiStatus] = useState<{gemini: boolean; huggingface: boolean}>({
     gemini: true,
@@ -47,8 +45,17 @@ export function MeetingSummarizer() {
   const [userEmail, setUserEmail] = useState('');
   const [userName, setUserName] = useState('');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [meetingLink, setMeetingLink] = useState('');
+  const [meetingDetails, setMeetingDetails] = useState<{
+    platform?: string;
+    date?: string;
+    time?: string;
+    duration?: string;
+    error?: string;
+    link?: string;
+    timezone?: string;
+  }>({});
 
-  // Fetch user details from supabase on mount
   useEffect(() => {
     const fetchUserDetails = async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -68,30 +75,24 @@ export function MeetingSummarizer() {
   const durationIntervalRef = useRef<number | null>(null);
   const maxRecordingDuration = 1200;
 
-  // Check if audio recording is supported
   useEffect(() => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setAudioSupported(false);
       setError('Audio recording is not supported in this browser. Try using Chrome or Firefox.');
     }
-    
-    // Check API keys
     const checkApiKeys = async () => {
       const geminiKey = import.meta.env.VITE_GEMINI_API_KEY;
       const huggingfaceKey = import.meta.env.VITE_HUGGINGFACE_API_KEY;
-      
       setApiStatus({
         gemini: !!geminiKey,
         huggingface: !!huggingfaceKey
       });
-      
       if (!geminiKey) {
         setError('Google Gemini API key is missing. Please check your .env file.');
       } else if (!huggingfaceKey) {
         setError('Hugging Face API key is missing. Please add it to the .env file.');
       }
     };
-    
     checkApiKeys();
   }, []);
 
@@ -100,12 +101,10 @@ export function MeetingSummarizer() {
     if (history) {
       setSummaryHistory(JSON.parse(history));
     }
-
     return () => {
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
       }
-      // Only stop recording if currently recording
       if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
         stopRecording();
       }
@@ -118,8 +117,6 @@ export function MeetingSummarizer() {
         const now = new Date();
         const diff = Math.floor((now.getTime() - startTime.getTime()) / 1000);
         setDuration(diff);
-        
-        // Auto-stop recording if it exceeds the maximum duration
         if (diff >= maxRecordingDuration) {
           stopRecording();
         }
@@ -127,7 +124,6 @@ export function MeetingSummarizer() {
     } else if (durationIntervalRef.current) {
       clearInterval(durationIntervalRef.current);
     }
-
     return () => {
       if (durationIntervalRef.current) {
         clearInterval(durationIntervalRef.current);
@@ -145,7 +141,6 @@ export function MeetingSummarizer() {
   const startRecording = async () => {
     try {
       setError(null);
-      // Only check Hugging Face API key
       if (!apiStatus.huggingface) {
         throw new Error('Hugging Face API key is missing. Please check your .env file.');
       }
@@ -155,7 +150,6 @@ export function MeetingSummarizer() {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error('Audio recording is not supported in this browser. Try using Chrome or Firefox.');
       }
-      
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -163,11 +157,7 @@ export function MeetingSummarizer() {
           autoGainControl: true
         } 
       });
-      
-      // Set up media recorder for audio - use audio/webm format for better compatibility
       let options = {};
-      
-      // Check if the browser supports audio/webm
       if (MediaRecorder.isTypeSupported('audio/webm')) {
         options = { mimeType: 'audio/webm' };
       } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
@@ -175,28 +165,22 @@ export function MeetingSummarizer() {
       } else if (MediaRecorder.isTypeSupported('audio/ogg')) {
         options = { mimeType: 'audio/ogg' };
       }
-      
       const mediaRecorder = new MediaRecorder(stream, options);
       audioChunksRef.current = [];
-      
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
-
       mediaRecorder.onstop = () => {
         try {
           if (audioChunksRef.current.length === 0) {
             throw new Error('No audio data was recorded. Please try again.');
           }
-          
           const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType || 'audio/webm' });
-          
           if (audioBlob.size < 1000) {
             throw new Error('Audio recording is too short or empty. Please try again.');
           }
-          
           const url = URL.createObjectURL(audioBlob);
           setAudioURL(url);
         } catch (err) {
@@ -204,10 +188,8 @@ export function MeetingSummarizer() {
           setError(err instanceof Error ? err.message : 'Failed to process recorded audio');
         }
       };
-
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(1000);
-
       setIsRecording(true);
       setStartTime(new Date());
     } catch (err) {
@@ -245,11 +227,9 @@ export function MeetingSummarizer() {
     if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
       return;
     }
-
     try {
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
-
       setIsRecording(false);
       setIsPaused(false);
     } catch (err) {
@@ -259,7 +239,6 @@ export function MeetingSummarizer() {
       setIsPaused(false);
       return;
     }
-    
     if (audioChunksRef.current.length > 0) {
       setTranscribing(true);
       setError(null);
@@ -267,32 +246,25 @@ export function MeetingSummarizer() {
         const audioBlob = new Blob(audioChunksRef.current, { 
           type: mediaRecorderRef.current?.mimeType || 'audio/webm' 
         });
-        
         if (audioBlob.size < 1000) {
           throw new Error('Audio recording is too short or empty. Please try again or use the "Test with Sample Text" option.');
         }
-        
-        // Transcribe the audio using Hugging Face only
         let transcribedText = '';
         if (!import.meta.env.VITE_GEMINI_API_KEY) {
           throw new Error('Hugging Face API key is not set. Please add your API key to the .env file.');
         }
         transcribedText = await transcribeAudio(audioBlob);
-        
         if (!transcribedText || transcribedText.trim() === '') {
           throw new Error('No transcription was returned. The audio might be too quiet or in an unsupported language.');
         }
-        
         setTranscript(transcribedText);
         if (!import.meta.env.VITE_GEMINI_API_KEY) {
           throw new Error('Google Gemini API key is not set. Please add your API key to the .env file.');
         }
-
         setLoading(true);
         try {
           const meetingSummary = await summarizeMeeting(transcribedText);
           setSummary(meetingSummary);
-
           const newSummary: MeetingSummary = {
             id: Date.now().toString(),
             date: new Date().toISOString(),
@@ -300,7 +272,6 @@ export function MeetingSummarizer() {
             summary: meetingSummary,
             transcript: transcribedText
           };
-
           const updatedHistory = [newSummary, ...summaryHistory];
           setSummaryHistory(updatedHistory);
           localStorage.setItem('meetingSummaryHistory', JSON.stringify(updatedHistory));
@@ -327,44 +298,33 @@ export function MeetingSummarizer() {
     await supabase.auth.signOut();
   };
 
-  // For testing purposes - use this function to bypass audio recording
   const testWithSampleText = async () => {
     setTranscribing(true);
     setError(null);
-    
     try {
-      // Check API keys
       if (!apiStatus.gemini) {
         throw new Error('Google Gemini API key is missing. Please check your .env file.');
       }
-
       const sampleText = "This is a test meeting transcript. We discussed the project timeline and agreed to complete the first phase by next Friday. John will handle the design work, and Sarah will take care of the backend implementation. We also decided to use React for the frontend and Node.js for the backend. The team will meet again next Monday to review progress.";
-      
       setTranscript(sampleText);
-      
-      // Generate summary
       setLoading(true);
       try {
         const meetingSummary = await summarizeMeeting(sampleText);
         setSummary(meetingSummary);
-
         const newSummary: MeetingSummary = {
           id: Date.now().toString(),
           date: new Date().toISOString(),
-          duration: 300, // 5 minutes sample duration
+          duration: 300,
           summary: meetingSummary,
           transcript: sampleText
         };
-
         const updatedHistory = [newSummary, ...summaryHistory];
         setSummaryHistory(updatedHistory);
         localStorage.setItem('meetingSummaryHistory', JSON.stringify(updatedHistory));
       } catch (summaryError) {
-        console.error('Error generating summary:', summaryError);
         setError(summaryError instanceof Error ? summaryError.message : 'Failed to generate summary');
       }
     } catch (err) {
-      console.error('Processing error:', err);
       setError(err instanceof Error ? err.message : 'Failed to process sample text');
     } finally {
       setTranscribing(false);
@@ -372,17 +332,13 @@ export function MeetingSummarizer() {
     }
   };
 
-  const toggleSettings = () => {
-    setShowSettings(!showSettings);
-  };
+  const toggleSettings = () => setShowSettings(!showSettings);
 
-  // Google Calendar API config
-  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID; // Add to your .env
-  const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;     // Add to your .env
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
   const GOOGLE_DISCOVERY_DOCS = ["https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest"];
   const GOOGLE_SCOPES = "https://www.googleapis.com/auth/calendar.readonly";
 
-  // Load Google API script
   useEffect(() => {
     const script = document.createElement('script');
     script.src = "https://apis.google.com/js/api.js";
@@ -402,27 +358,20 @@ export function MeetingSummarizer() {
     document.body.appendChild(script);
   }, []);
 
-  // Replace fetchCalendarMeetings with improved Google Calendar logic
   const fetchCalendarMeetings = async (email: string) => {
-    // Check if gapi is loaded and initialized
     if (!window.gapi?.client?.calendar) {
-      // Wait for gapi to load if not ready
       await new Promise((resolve, reject) => {
         const checkGapi = () => {
           if (window.gapi?.client?.calendar) {
             resolve(true);
           } else if (window.gapi) {
-            // Gapi is loaded but not initialized
             window.gapi.load('client:auth2', async () => {
               try {
                 await window.gapi.client.init({
                   apiKey: GOOGLE_API_KEY,
                   clientId: GOOGLE_CLIENT_ID,
-                  // Remove discoveryDocs to avoid CORS issues
                   scope: GOOGLE_SCOPES,
                 });
-                
-                // Load calendar API manually
                 await window.gapi.client.load('calendar', 'v3');
                 resolve(true);
               } catch (error) {
@@ -430,21 +379,16 @@ export function MeetingSummarizer() {
               }
             });
           } else {
-            // Retry after a short delay
             setTimeout(checkGapi, 100);
           }
         };
         checkGapi();
       });
     }
-
-    // Check authentication status
     const authInstance = window.gapi.auth2.getAuthInstance();
     if (!authInstance) {
       throw new Error('Google Auth not initialized');
     }
-
-    // Only sign in if not already signed in
     if (!authInstance.isSignedIn.get()) {
       try {
         await authInstance.signIn({
@@ -455,13 +399,9 @@ export function MeetingSummarizer() {
         throw new Error('Failed to authenticate with Google Calendar');
       }
     }
-
-    // Use broader date range for better results
     const now = new Date();
     const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
     const timeMax = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59).toISOString();
-
-    // Fetch events
     let response;
     try {
       response = await window.gapi.client.calendar.events.list({
@@ -480,10 +420,7 @@ export function MeetingSummarizer() {
         'Failed to fetch events from Google Calendar. Please check your API credentials and permissions.'
       );
     }
-    
     console.log('Google Calendar API response:', response.result.items);
-
-    // Map Google events to MeetingSummary
     const events = response.result.items || [];
     return events.map((event: any) => ({
       id: event.id,
@@ -499,8 +436,6 @@ export function MeetingSummarizer() {
   const handleImportCalendar = async () => {
     setError(null);
     setShowCalendarMeetings(false);
-    
-    // Remove the email check since user is already authenticated via Supabase
     setLoading(true);
     try {
       const meetings = await fetchCalendarMeetings(userEmail);
@@ -514,14 +449,138 @@ export function MeetingSummarizer() {
     }
   };
 
-  // Filter meetings by selected date
+  const extractMeetingDetails = (input: string) => {
+    let details: typeof meetingDetails = {};
+    try {
+      // Extract meeting link
+      const meetRegex = /(https:\/\/meet\.google\.com\/[a-zA-Z0-9\-]+)/;
+      const zoomRegex = /(https:\/\/zoom\.us\/j\/[^\s]+)/;
+      const teamsRegex = /(https:\/\/teams\.microsoft\.com\/l\/meetup-join\/[^\s]+)/;
+      let link = '';
+      if (meetRegex.test(input)) {
+        link = input.match(meetRegex)?.[1] || '';
+        details.platform = 'Google Meet';
+      } else if (zoomRegex.test(input)) {
+        link = input.match(zoomRegex)?.[1] || '';
+        details.platform = 'Zoom';
+      } else if (teamsRegex.test(input)) {
+        link = input.match(teamsRegex)?.[1] || '';
+        details.platform = 'Microsoft Teams';
+      }
+      if (link) {
+        details.link = link;
+      }
+
+      // Extract date and time from a line like "Tuesday, July 15 · 6:00 – 7:00pm"
+      const dateTimeLine = input.split('\n').find(line =>
+        /[A-Za-z]+,\s+[A-Za-z]+\s+\d{1,2}\s*·\s*[0-9]{1,2}:[0-9]{2}\s*[–-]\s*[0-9]{1,2}:[0-9]{2}(am|pm)?/i.test(line)
+      );
+      if (dateTimeLine) {
+        const dateRegex = /([A-Za-z]+,\s+[A-Za-z]+\s+\d{1,2})/;
+        const timeRegex = /([0-9]{1,2}:[0-9]{2})\s*[–-]\s*([0-9]{1,2}:[0-9]{2})(am|pm)?/i;
+        const dateMatch = dateTimeLine.match(dateRegex);
+        const timeMatch = dateTimeLine.match(timeRegex);
+        if (dateMatch) {
+          details.date = dateMatch[1];
+        }
+        if (timeMatch) {
+          // Parse start and end time with am/pm
+          let start = timeMatch[1];
+          let end = timeMatch[2];
+          let endPeriod = timeMatch[3] || '';
+          // If end time has am/pm, use it; otherwise, try to infer from context (not robust)
+          details.time = `${start} - ${end}${endPeriod}`;
+          // Duration calculation (handle am/pm correctly)
+          const parseTime = (t: string, period: string) => {
+            let [h, m] = t.split(':').map(Number);
+            if (period.toLowerCase() === 'pm' && h < 12) h += 12;
+            if (period.toLowerCase() === 'am' && h === 12) h = 0;
+            return h * 60 + m;
+          };
+          // Try to get am/pm for start time from context (not always possible)
+          let startPeriod = '';
+          // If endPeriod exists, and start < end, assume same period
+          if (endPeriod) {
+            startPeriod = endPeriod;
+          }
+          const startMinutes = parseTime(start, startPeriod);
+          const endMinutes = parseTime(end, endPeriod);
+          let durationMin = endMinutes - startMinutes;
+          if (durationMin <= 0) durationMin += 12 * 60; // handle overnight or missing am/pm
+          details.duration = `${durationMin} min`;
+        }
+      }
+
+      // Extract time zone
+      const tzLine = input.split('\n').find(line => /Time zone:/i.test(line));
+      if (tzLine) {
+        const tzMatch = tzLine.match(/Time zone:\s*([^\n]+)/i);
+        if (tzMatch) {
+          details.timezone = tzMatch[1].trim();
+        }
+      }
+
+      if (!details.platform) {
+        details.error = 'No supported meeting link found.';
+      }
+    } catch (e) {
+      details.error = 'Failed to parse meeting details.';
+    }
+    return details;
+  };
+
+  // Add this function to save meeting to Supabase for the logged-in user
+  const saveMeetingToDatabase = async (meeting: MeetingSummary) => {
+    if (!userEmail) return;
+    try {
+      await supabase.from('meetings').insert([
+        {
+          id: meeting.id,
+          user_email: userEmail,
+          date: meeting.date,
+          duration: meeting.duration,
+          transcript: meeting.transcript
+        }
+      ]);
+    } catch (err) {
+      // error logging only
+    }
+  };
+
+  // When adding a meeting, also save to database
+  const handleExtractDetails = () => {
+    const details = extractMeetingDetails(meetingLink);
+    setMeetingDetails(details);
+
+    if (details.platform && details.date && details.time && details.link) {
+      let meetingDate = new Date();
+      try {
+        const dateParts = details.date.split(',');
+        if (dateParts.length === 2) {
+          const [weekday, rest] = dateParts;
+          const [month, day] = rest.trim().split(' ');
+          const year = new Date().getFullYear();
+          meetingDate = new Date(`${month} ${day}, ${year}`);
+        }
+      } catch {}
+      const newMeeting: MeetingSummary = {
+        id: Date.now().toString(),
+        date: meetingDate.toISOString(),
+        duration: details.duration ? parseInt(details.duration) : 0,
+        summary: `${details.platform} Meeting`,
+        transcript: `Link: ${details.link}\nDate: ${details.date}\nTime: ${details.time}\nDuration: ${details.duration || ''}\nTimeZone: ${details.timezone || ''}`
+      };
+      setCalendarMeetings(prev => [newMeeting, ...prev]);
+      saveMeetingToDatabase(newMeeting); // <-- Save to Supabase
+    }
+  };
+
   const filteredCalendarMeetings = selectedDate
     ? calendarMeetings.filter(m =>
       new Date(m.date).toDateString() === selectedDate.toDateString()
     )
     : calendarMeetings;
 
-  // Group meetings by date for display
   const groupedMeetings = filteredCalendarMeetings.reduce((acc: Record<string, MeetingSummary[]>, meeting) => {
     const dateStr = new Date(meeting.date).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     if (!acc[dateStr]) acc[dateStr] = [];
@@ -529,9 +588,67 @@ export function MeetingSummarizer() {
     return acc;
   }, {});
 
+  // Add this function to remove a meeting by id
+  const removeMeeting = (id: string) => {
+    setCalendarMeetings(prev => prev.filter(m => m.id !== id));
+  };
+
+  // Remove past meetings automatically
+  useEffect(() => {
+    setCalendarMeetings(prev =>
+      prev.filter(m => {
+        const meetingDate = new Date(m.date);
+        return meetingDate >= new Date();
+      })
+    );
+  }, [calendarMeetings.length]);
+
+  // Persist calendarMeetings to localStorage
+  useEffect(() => {
+    localStorage.setItem('calendarMeetings', JSON.stringify(calendarMeetings));
+  }, [calendarMeetings]);
+
+  // Load calendarMeetings from localStorage on mount
+  useEffect(() => {
+    const storedMeetings = localStorage.getItem('calendarMeetings');
+    if (storedMeetings) {
+      setCalendarMeetings(JSON.parse(storedMeetings));
+    }
+  }, []);
+
+  // Fetch meetings from Supabase for the logged-in user
+  const fetchUserMeetingsFromDatabase = async (email: string) => {
+    if (!email) return [];
+    try {
+      const { data, error } = await supabase
+        .from('meetings')
+        .select('*')
+        .eq('user_email', email);
+      if (error) {
+        console.error('Failed to fetch meetings from database:', error);
+        return [];
+      }
+      return data || [];
+    } catch (err) {
+      console.error('Failed to fetch meetings from database:', err);
+      return [];
+    }
+  };
+
+  // Load meetings from Supabase when userEmail changes (login)
+  useEffect(() => {
+    if (userEmail) {
+      (async () => {
+        const dbMeetings = await fetchUserMeetingsFromDatabase(userEmail);
+        if (dbMeetings.length > 0) {
+          setCalendarMeetings(dbMeetings);
+        }
+      })();
+    }
+  }, [userEmail]);
+
   return (
     <div className="flex min-h-screen bg-gray-50 font-inter">
-      {/* Sidebar (hidden on mobile, toggled by hamburger) */}
       <aside className={`w-72 bg-white border-r flex flex-col py-6 px-5 fixed top-0 left-0 h-100 z-40 
       transition-transform duration-300
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:static md:translate-x-0 md:flex`}>
@@ -559,7 +676,6 @@ export function MeetingSummarizer() {
                 <History className="w-4 h-4 mr-2" /> Meeting History
               </Link>
             </li>
-            {/* Add more nav items as needed */}
           </ul>
         </nav>
         <div className="mt-auto">
@@ -571,8 +687,6 @@ export function MeetingSummarizer() {
           </button>
         </div>
       </aside>
-
-      {/* Hamburger menu for mobile (move to right side) */}
       <button
         className="md:hidden fixed top-4 right-4 z-50 bg-white rounded-full p-2 shadow"
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -580,10 +694,7 @@ export function MeetingSummarizer() {
       >
         <Menu className="w-6 h-6 text-blue-600" />
       </button>
-
-      {/* Main Content */}
       <div className="flex-1 flex flex-col">
-        {/* Top Navigation */}
         <header className="flex flex-col md:flex-row items-start md:items-center justify-between px-4 md:px-10 py-6 bg-white border-b">
           <div className="flex flex-col md:flex-row items-start md:items-center space-y-2 md:space-y-0 md:space-x-4 w-full">
             <h1 className="text-2xl font-bold text-gray-900">Meetings</h1>
@@ -609,16 +720,59 @@ export function MeetingSummarizer() {
             <nav className="flex space-x-6 text-gray-600 font-medium">
               <span className="border-b-2 border-transparent hover:border-blue-600 cursor-pointer">Meetings</span>
               <span className="border-b-2 border-blue-600">Calendar</span>
-              {/* <span className="border-b-2 border-transparent hover:border-blue-600 cursor-pointer">Action Items</span> */}
             </nav>
             <Settings className="w-5 h-5 text-gray-400 cursor-pointer" />
           </div>
         </header>
-
         <div className="flex flex-1 flex-col md:flex-row">
-          {/* Meetings List */}
           <section className="flex-1 px-4 md:px-10 py-8 overflow-y-auto">
-            {/* Show recording status when recording */}
+            {/* Meeting Link Extraction UI */}
+            <div className="mb-8 p-4 bg-white border border-gray-200 rounded-lg">
+              <div className="font-semibold mb-2 text-gray-700">Extract Meeting Details from Link</div>
+              <div className="flex flex-col md:flex-row items-center gap-2">
+                <input
+                  type="text"
+                  value={meetingLink}
+                  onChange={e => setMeetingLink(e.target.value)}
+                  placeholder="Paste your Google Meet, Zoom, or Teams link here"
+                  className="flex-1 px-3 py-2 border rounded-md"
+                />
+                <button
+                  onClick={handleExtractDetails}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  Extract Details
+                </button>
+              </div>
+              {meetingDetails.platform && (
+                <div className="mt-4 text-gray-800">
+                  <div><strong>Platform:</strong> {meetingDetails.platform}</div>
+                  {meetingDetails.platform === 'Zoom' && (
+                    <div className="my-2">
+                      <img src="https://portal-media.cca.edu/images/Zoom_banner2x.width-1130.png" alt="Zoom" style={{height: 40}} />
+                    </div>
+                  )}
+                  {meetingDetails.platform === 'Google Meet' && (
+                    <div className="my-2">
+                      <img src="https://community.pepperdine.edu/it/images/google-meet-1440x430.jpg" alt="Google Meet" style={{height: 40}} />
+                    </div>
+                  )}
+                  {meetingDetails.platform === 'Microsoft Teams' && (
+                    <div className="my-2">
+                      <img src="https://upload.wikimedia.org/wikipedia/commons/4/4e/Microsoft_Office_Teams_%282018%E2%80%93present%29.svg" alt="Teams" style={{height: 40}} />
+                    </div>
+                  )}
+                  {meetingDetails.link && <div><strong>Link:</strong> <a href={meetingDetails.link} target="_blank" rel="noopener noreferrer">{meetingDetails.link}</a></div>}
+                  {meetingDetails.date && <div><strong>Date:</strong> {meetingDetails.date}</div>}
+                  {meetingDetails.time && <div><strong>Time:</strong> {meetingDetails.time}</div>}
+                  {meetingDetails.duration && <div><strong>Duration:</strong> {meetingDetails.duration}</div>}
+                  {meetingDetails.timezone && <div><strong>Time Zone:</strong> {meetingDetails.timezone}</div>}
+                </div>
+              )}
+              {meetingDetails.error && (
+                <div className="mt-2 text-red-600">{meetingDetails.error}</div>
+              )}
+            </div>
             {isRecording && (
               <div className="mb-8 p-4 bg-blue-50 border border-blue-200 rounded-lg flex items-center space-x-6">
                 <div className="flex items-center space-x-2">
@@ -639,11 +793,11 @@ export function MeetingSummarizer() {
                 >
                   {isPaused ? (
                     <>
-                      <Play className="w-4 h-4 mr-2 inline" /> Resume
+                      <span className="inline-block mr-2">&#9654;</span> Resume
                     </>
                   ) : (
                     <>
-                      <Pause className="w-4 h-4 mr-2 inline" /> Pause
+                      <span className="inline-block mr-2">&#10073;&#10073;</span> Pause
                     </>
                   )}
                 </button>
@@ -655,23 +809,18 @@ export function MeetingSummarizer() {
                 </button>
               </div>
             )}
-
-            {/* Show audio preview after recording */}
             {audioURL && (
               <div className="mb-8 p-4 bg-gray-50 border border-gray-200 rounded-lg">
                 <div className="font-semibold mb-2 text-gray-700">Recorded Audio Preview</div>
                 <audio controls src={audioURL} className="w-full" />
               </div>
             )}
-
-            {/* Show transcript after recording */}
             {transcript && (
               <div className="mb-8 p-4 bg-gray-50 border border-gray-200 rounded-lg">
                 <div className="font-semibold mb-2 text-gray-700">Transcript</div>
                 <div className="text-gray-800 whitespace-pre-wrap">{transcript}</div>
               </div>
             )}
-
             {Object.keys(groupedMeetings).length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full">
                 <div className="text-lg font-semibold mb-2 text-gray-800">You don't have any meetings</div>
@@ -724,6 +873,13 @@ export function MeetingSummarizer() {
                         <button className="flex items-center text-gray-500 hover:text-blue-600">
                           <span className="mr-1">💬</span>5
                         </button>
+                        <button
+                          className="flex items-center text-red-500 hover:text-red-700"
+                          onClick={() => removeMeeting(meeting.id)}
+                          title="Remove meeting"
+                        >
+                          <span className="mr-1">🗑️</span>Remove
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -731,13 +887,8 @@ export function MeetingSummarizer() {
               ))
             )}
           </section>
-
-          {/* Calendar Panel (hidden on mobile) */}
           <aside className="hidden md:flex w-full md:w-96 bg-white border-t md:border-t-0 md:border-l px-4 md:px-8 py-8 flex-col">
             <div className="flex flex-col md:flex-row items-start md:items-center justify-between mb-6">
-              {/* <div className="text-lg font-semibold text-gray-900 flex items-center mb-2 md:mb-0">
-                <span className="mr-2">📅</span> Calendar
-              </div> */}
               <div className="flex space-x-2">
                 <button
                   onClick={() => setSelectedDate(new Date())}
@@ -776,14 +927,12 @@ export function MeetingSummarizer() {
                 onChange={date => setSelectedDate(date as Date)}
                 value={selectedDate}
                 className="react-calendar-fancy"
-                tileClassName={({ date, view }) => {
-                  // Highlight today
+                tileClassName={({ date }) => {
                   if (
                     date.toDateString() === new Date().toDateString()
                   ) {
                     return 'bg-blue-200 font-bold text-blue-900 rounded-full';
                   }
-                  // Highlight selected date
                   if (
                     selectedDate &&
                     date.toDateString() === selectedDate.toDateString()
@@ -838,11 +987,9 @@ export function MeetingSummarizer() {
                 }
               }
             `}</style>
-            {/* ...existing calendar info, empty state, etc... */}
           </aside>
         </div>
       </div>
-      {/* ...existing EmailDialog, etc... */}
     </div>
   );
 }
