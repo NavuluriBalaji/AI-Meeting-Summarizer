@@ -699,13 +699,13 @@ export function MeetingSummarizer() {
           <div className="flex flex-col md:flex-row items-start md:items-center space-y-2 md:space-y-0 md:space-x-4 w-full">
             <h1 className="text-2xl font-bold text-gray-900">Meetings</h1>
             <div className="flex space-x-2">
-              <button
+{/*               <button
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                 onClick={handleImportCalendar}
                 disabled={loading}
               >
                 Import
-              </button>
+              </button> */}
               <button
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center"
                 onClick={isRecording ? stopRecording : startRecording}
