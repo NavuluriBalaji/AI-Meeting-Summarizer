@@ -387,6 +387,8 @@ export function MeetingSummarizer() {
     const script = document.createElement('script');
     script.src = "https://apis.google.com/js/api.js";
     script.async = true;
+    script.defer = true;
+    script.crossOrigin = "anonymous";
     script.onload = () => {
       window.gapi.load('client:auth2', () => {
         window.gapi.client.init({
@@ -400,23 +402,64 @@ export function MeetingSummarizer() {
     document.body.appendChild(script);
   }, []);
 
-  // Replace fetchCalendarMeetings with Google Calendar logic
+  // Replace fetchCalendarMeetings with improved Google Calendar logic
   const fetchCalendarMeetings = async (email: string) => {
-    // Authenticate user
-    const authInstance = window.gapi.auth2.getAuthInstance();
-    if (!authInstance || !authInstance.isSignedIn.get()) {
-      await window.gapi.auth2.getAuthInstance().signIn();
-    }
-
-    // Ensure gapi client is initialized
+    // Check if gapi is loaded and initialized
     if (!window.gapi?.client?.calendar) {
-      throw new Error('Google API client not initialized yet. Please wait and try again.');
+      // Wait for gapi to load if not ready
+      await new Promise((resolve, reject) => {
+        const checkGapi = () => {
+          if (window.gapi?.client?.calendar) {
+            resolve(true);
+          } else if (window.gapi) {
+            // Gapi is loaded but not initialized
+            window.gapi.load('client:auth2', async () => {
+              try {
+                await window.gapi.client.init({
+                  apiKey: GOOGLE_API_KEY,
+                  clientId: GOOGLE_CLIENT_ID,
+                  // Remove discoveryDocs to avoid CORS issues
+                  scope: GOOGLE_SCOPES,
+                });
+                
+                // Load calendar API manually
+                await window.gapi.client.load('calendar', 'v3');
+                resolve(true);
+              } catch (error) {
+                reject(error);
+              }
+            });
+          } else {
+            // Retry after a short delay
+            setTimeout(checkGapi, 100);
+          }
+        };
+        checkGapi();
+      });
     }
 
-    // Use valid ISO strings for timeMin/timeMax
+    // Check authentication status
+    const authInstance = window.gapi.auth2.getAuthInstance();
+    if (!authInstance) {
+      throw new Error('Google Auth not initialized');
+    }
+
+    // Only sign in if not already signed in
+    if (!authInstance.isSignedIn.get()) {
+      try {
+        await authInstance.signIn({
+          scope: GOOGLE_SCOPES
+        });
+      } catch (authError) {
+        console.error('Authentication error:', authError);
+        throw new Error('Failed to authenticate with Google Calendar');
+      }
+    }
+
+    // Use broader date range for better results
     const now = new Date();
-    const timeMin = new Date(now.getFullYear(), now.getMonth(), 1).toISOString(); // start of current month
-    const timeMax = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString(); // end of current month
+    const timeMin = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+    const timeMax = new Date(now.getFullYear(), now.getMonth() + 2, 0, 23, 59, 59).toISOString();
 
     // Fetch events
     let response;
@@ -427,16 +470,17 @@ export function MeetingSummarizer() {
         timeMax,
         showDeleted: false,
         singleEvents: true,
-        orderBy: 'startTime'
+        orderBy: 'startTime',
+        maxResults: 50
       });
     } catch (err: any) {
-      // Log error for debugging
       console.error('Google Calendar API error:', err);
       throw new Error(
         err?.result?.error?.message ||
         'Failed to fetch events from Google Calendar. Please check your API credentials and permissions.'
       );
     }
+    
     console.log('Google Calendar API response:', response.result.items);
 
     // Map Google events to MeetingSummary
@@ -455,17 +499,16 @@ export function MeetingSummarizer() {
   const handleImportCalendar = async () => {
     setError(null);
     setShowCalendarMeetings(false);
-    if (!userEmail) {
-      setError('Please enter your email to import calendar meetings.');
-      return;
-    }
+    
+    // Remove the email check since user is already authenticated via Supabase
     setLoading(true);
     try {
       const meetings = await fetchCalendarMeetings(userEmail);
       setCalendarMeetings(meetings);
       setShowCalendarMeetings(true);
     } catch (err) {
-      setError('Failed to import meetings from calendar.');
+      console.error('Import calendar error:', err);
+      setError('Failed to import meetings from calendar. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -474,8 +517,8 @@ export function MeetingSummarizer() {
   // Filter meetings by selected date
   const filteredCalendarMeetings = selectedDate
     ? calendarMeetings.filter(m =>
-        new Date(m.date).toDateString() === selectedDate.toDateString()
-      )
+      new Date(m.date).toDateString() === selectedDate.toDateString()
+    )
     : calendarMeetings;
 
   // Group meetings by date for display
