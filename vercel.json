@@ -20,11 +20,11 @@
     },
     {
       "src": "/",
-      "dest": "/AI-Meeting-Summarizer-main/index.html"
+      "dest": "index.html"
     },
     {
       "src": "/(.*)",
-      "dest": "/AI-Meeting-Summarizer-main/index.html"
+      "dest": "index.html"
     }
   ]
 }
