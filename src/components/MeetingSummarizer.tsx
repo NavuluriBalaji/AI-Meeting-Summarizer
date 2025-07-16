@@ -249,38 +249,33 @@ export function MeetingSummarizer() {
         if (audioBlob.size < 1000) {
           throw new Error('Audio recording is too short or empty. Please try again or use the "Test with Sample Text" option.');
         }
-        let transcribedText = '';
-        if (!import.meta.env.VITE_GEMINI_API_KEY) {
-          throw new Error('Hugging Face API key is not set. Please add your API key to the .env file.');
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'meeting.webm');
+        const response = await fetch('https://speech2text-6n0t.onrender.com/api/speech2text', {
+          method: 'POST',
+          body: formData
+        });
+        if (!response.ok) {
+          throw new Error('Failed to get transcription and summary from the server.');
         }
-        transcribedText = await transcribeAudio(audioBlob);
-        if (!transcribedText || transcribedText.trim() === '') {
-          throw new Error('No transcription was returned. The audio might be too quiet or in an unsupported language.');
+        const result = await response.json();
+        if (!result.transcription) {
+          throw new Error('Invalid response from server.');
         }
-        setTranscript(transcribedText);
-        if (!import.meta.env.VITE_GEMINI_API_KEY) {
-          throw new Error('Google Gemini API key is not set. Please add your API key to the .env file.');
-        }
-        setLoading(true);
-        try {
-          const meetingSummary = await summarizeMeeting(transcribedText);
-          setSummary(meetingSummary);
-          const newSummary: MeetingSummary = {
-            id: Date.now().toString(),
-            date: new Date().toISOString(),
-            duration,
-            summary: meetingSummary,
-            transcript: transcribedText
-          };
-          const updatedHistory = [newSummary, ...summaryHistory];
-          setSummaryHistory(updatedHistory);
-          localStorage.setItem('meetingSummaryHistory', JSON.stringify(updatedHistory));
-        } catch (summaryError) {
-          console.error('Error generating summary:', summaryError);
-          setError(summaryError instanceof Error ? summaryError.message : 'Failed to generate summary');
-        }
+        setTranscript(result.transcription);
+        setSummary(result.summary || '');
+
+        const newSummary: MeetingSummary = {
+          id: Date.now().toString(),
+          date: new Date().toISOString(),
+          duration,
+          summary: result.summary || '',
+          transcript: result.transcription
+        };
+        const updatedHistory = [newSummary, ...summaryHistory];
+        setSummaryHistory(updatedHistory);
+        localStorage.setItem('meetingSummaryHistory', JSON.stringify(updatedHistory));
       } catch (err) {
-        console.error('Processing error:', err);
         setError(err instanceof Error ? err.message : 'Failed to process audio');
       } finally {
         setTranscribing(false);
@@ -699,7 +694,7 @@ export function MeetingSummarizer() {
           <div className="flex flex-col md:flex-row items-start md:items-center space-y-2 md:space-y-0 md:space-x-4 w-full">
             <h1 className="text-2xl font-bold text-gray-900">Meetings</h1>
             <div className="flex space-x-2">
-{/*               <button
+              {/* <button
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
                 onClick={handleImportCalendar}
                 disabled={loading}
@@ -709,7 +704,7 @@ export function MeetingSummarizer() {
               <button
                 className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors flex items-center"
                 onClick={isRecording ? stopRecording : startRecording}
-                disabled={!audioSupported || !apiStatus.gemini || !apiStatus.huggingface}
+                disabled={!audioSupported || !apiStatus.gemini || !apiStatus.huggingface} 
               >
                 <Mic className="w-5 h-5 mr-2" />
                 {isRecording ? "Stop Recording" : "Record"}
