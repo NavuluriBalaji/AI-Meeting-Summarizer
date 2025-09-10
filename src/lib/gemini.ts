@@ -20,13 +20,12 @@ export async function summarizeMeeting(transcript: string) {
     const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
     
     const prompt = `
-      Please analyze this meeting transcript and provide:
-      1. A concise summary of key points discussed
-      2. Action items and their owners (if mentioned)
-      3. Important decisions made
-      4. Follow-up tasks
-      
-      If the transcript is very short or unclear, please indicate that and provide whatever summary is possible.
+      This is an interview-based meeting transcript. Please:
+      1. Identify Balaji and Rishika as interviewers. All other named speakers are interviewees (candidates).
+      2. For each interviewee, evaluate their skills, strengths, weaknesses, and overall capacity based on their responses in the transcript.
+      3. Summarize each interviewee's main skills, technical and soft skills, and any areas for improvement.
+      4. If possible, provide a brief summary of the overall interview and any recommendations for each candidate.
+      5. If the transcript is unclear or too short, mention that and summarize whatever is possible.
       
       Transcript:
       ${transcript}
